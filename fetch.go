@@ -39,7 +39,7 @@ func Fetch(url string, opts *Opts) (*Response, error) {
 		var r Response
 		resp := args[0]
 		headersIt := resp.Get("headers").Call("entries")
-		headers := map[string]string{}
+		headers := Header{}
 		for {
 			n := headersIt.Call("next")
 			if n.Get("done").Bool() {
@@ -47,8 +47,7 @@ func Fetch(url string, opts *Opts) (*Response, error) {
 			}
 			pair := n.Get("value")
 			key, value := pair.Index(0).String(), pair.Index(1).String()
-			// TODO: support multi-value headers
-			headers[key] = value
+			headers.Add(key, value)
 		}
 		r.Headers = headers
 		r.OK = resp.Get("ok").Bool()
@@ -115,6 +114,19 @@ type Opts struct {
 	Signal context.Context
 }
 
+// Response is the response that retursn from the fetch promise.
+type Response struct {
+	Headers    Header
+	OK         bool
+	Redirected bool
+	Status     int
+	StatusText string
+	Type       string
+	URL        string
+	Body       []byte
+	BodyUsed   bool
+}
+
 // oof.
 func mapOpts(opts *Opts) (map[string]interface{}, error) {
 	mp := map[string]interface{}{}
@@ -168,17 +180,4 @@ func mapHeaders(mp map[string]string) map[string]interface{} {
 		newMap[k] = v
 	}
 	return newMap
-}
-
-// Response is the response that retursn from the fetch promise.
-type Response struct {
-	Headers    map[string]string
-	OK         bool
-	Redirected bool
-	Status     int
-	StatusText string
-	Type       string
-	URL        string
-	Body       []byte
-	BodyUsed   bool
 }
