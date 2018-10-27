@@ -6,69 +6,49 @@ import (
 	"syscall/js"
 )
 
-// cache enums
-const (
-	CacheDefault      = "default"
-	CacheNoStore      = "no-store"
-	CacheReload       = "reload"
-	CacheNone         = "no-cache"
-	CacheForce        = "force-cache"
-	CacheOnlyIfCached = "only-if-cached"
-)
+// Fetch uses the JS Fetch API to make requests
+// over WASM.
+func Fetch(url string, opts *Opts) (*Response, error) {
+	ch := make(chan *Response)
+	optsMap, err := mapOpts(opts)
+	if err != nil {
+		return nil, err
+	}
 
-// credentials enums
-const (
-	CredentialsOmit       = "omit"
-	CredentialsSameOrigin = "same-origin"
-	CredentialsInclude    = "include"
-)
+	js.Global().Call("fetch", url, optsMap).Call("then", js.NewCallback(func(args []js.Value) {
+		var r Response
+		resp := args[0]
+		headersIt := resp.Get("headers").Call("entries")
+		headers := map[string]string{}
+		for {
+			n := headersIt.Call("next")
+			if n.Get("done").Bool() {
+				break
+			}
+			pair := n.Get("value")
+			key, value := pair.Index(0).String(), pair.Index(1).String()
+			// TODO: support multi-value headers
+			headers[key] = value
+		}
+		r.Headers = headers
+		r.OK = resp.Get("ok").Bool()
+		r.Redirected = resp.Get("redirected").Bool()
+		r.Status = resp.Get("status").Int()
+		r.StatusText = resp.Get("statusText").String()
+		r.Type = resp.Get("type").String()
+		r.URL = resp.Get("url").String()
+		r.BodyUsed = resp.Get("bodyUsed").Bool()
 
-// Common HTTP methods.
-//
-// Unless otherwise noted, these are defined in RFC 7231 section 4.3.
-const (
-	MethodGet     = "GET"
-	MethodHead    = "HEAD"
-	MethodPost    = "POST"
-	MethodPut     = "PUT"
-	MethodPatch   = "PATCH" // RFC 5789
-	MethodDelete  = "DELETE"
-	MethodConnect = "CONNECT"
-	MethodOptions = "OPTIONS"
-	MethodTrace   = "TRACE"
-)
+		args[0].Call("text").Call("then", js.NewCallback(func(args []js.Value) {
+			r.Body = []byte(args[0].String())
+			ch <- &r
+		}))
+	}))
 
-// Mode enums
-const (
-	ModeSameOrigin = "same-origin"
-	ModeNoCORS     = "no-cors"
-	ModeCORS       = "cors"
-	ModeNavigate   = "navigate"
-)
+	return <-ch, nil
+}
 
-// Redirect enums
-const (
-	RedirectFollow = "follow"
-	RedirectError  = "error"
-	RedirectManual = "manual"
-)
-
-// Referrer enums
-const (
-	ReferrerNone   = "no-referrer"
-	ReferrerClient = "client"
-)
-
-// ReferrerPolicy enums
-const (
-	ReferrerPolicyNone        = "no-referrer"
-	ReferrerPolicyNoDowngrade = "no-referrer-when-downgrade"
-	ReferrerPolicyOrigin      = "origin"
-	ReferrerPolicyCrossOrigin = "origin-when-cross-origin"
-	ReferrerPolicyUnsafeURL   = "unsafe-url"
-)
-
-// Opts opts
+// Opts are the options you can pass to the fetch call.
 type Opts struct {
 	// Method is the http verb (constants are copied from net/http to avoid import)
 	Method string
@@ -101,39 +81,60 @@ type Opts struct {
 	Integrity string
 
 	// KeepAlive docs https://developer.mozilla.org/en-US/docs/Web/API/WindowOrWorkerGlobalScope/fetch
-	KeepAlive bool
+	KeepAlive *bool
 
 	// Signal docs https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal
 	Signal chan struct{}
 }
 
 // oof.
-func mapOpts(opts *Opts) map[string]interface{} {
-	mp := map[string]interface{}{
-		"Method":         opts.Method,
-		"Headers":        mapHeaders(opts.Headers),
-		"Mode":           opts.Mode,
-		"Credentials":    opts.Credentials,
-		"Cache":          opts.Cache,
-		"Redirect":       opts.Redirect,
-		"Referrer":       opts.Referrer,
-		"ReferrerPolicy": opts.ReferrerPolicy,
-		"Integrity":      opts.Integrity,
-		"KeepAlive":      opts.KeepAlive,
+func mapOpts(opts *Opts) (map[string]interface{}, error) {
+	mp := map[string]interface{}{}
+
+	if opts.Method != "" {
+		mp["method"] = opts.Method
 	}
+	if opts.Headers != nil {
+		mp["headers"] = mapHeaders(opts.Headers)
+	}
+	if opts.Mode != "" {
+		mp["mode"] = opts.Mode
+	}
+	if opts.Credentials != "" {
+		mp["credentials"] = opts.Credentials
+	}
+	if opts.Cache != "" {
+		mp["cache"] = opts.Cache
+	}
+	if opts.Redirect != "" {
+		mp["redirect"] = opts.Redirect
+	}
+	if opts.Referrer != "" {
+		mp["referrer"] = opts.Referrer
+	}
+	if opts.ReferrerPolicy != "" {
+		mp["referrerPolicy"] = opts.ReferrerPolicy
+	}
+	if opts.Integrity != "" {
+		mp["integrity"] = opts.Integrity
+	}
+	if opts.KeepAlive != nil {
+		mp["keepalive"] = *opts.KeepAlive
+	}
+
 	if opts.Signal != nil {
 		// TODO: do signal
 	}
 	if opts.Body != nil {
 		bts, err := ioutil.ReadAll(opts.Body)
 		if err != nil {
-			panic(err) // TODO: return err
+			return nil, err
 		}
 
 		mp["body"] = string(bts)
 	}
 
-	return mp
+	return mp, nil
 }
 
 func mapHeaders(mp map[string]string) map[string]interface{} {
@@ -144,14 +145,15 @@ func mapHeaders(mp map[string]string) map[string]interface{} {
 	return newMap
 }
 
-// Fetch fetches
-func Fetch(url string, opts *Opts) []byte {
-	ch := make(chan string)
-	js.Global().Call("fetch", url, mapOpts(opts)).Call("then", js.NewCallback(func(args []js.Value) {
-		args[0].Call("text").Call("then", js.NewCallback(func(args []js.Value) {
-			ch <- args[0].String()
-		}))
-	}))
-
-	return []byte(<-ch)
+// Response is the response that retursn from the fetch promise.
+type Response struct {
+	Headers    map[string]string
+	OK         bool
+	Redirected bool
+	Status     int
+	StatusText string
+	Type       string
+	URL        string
+	Body       []byte
+	BodyUsed   bool
 }
