@@ -1,6 +1,8 @@
 package fetch
 
 import (
+	"context"
+	"errors"
 	"io"
 	"io/ioutil"
 	"syscall/js"
@@ -9,10 +11,28 @@ import (
 // Fetch uses the JS Fetch API to make requests
 // over WASM.
 func Fetch(url string, opts *Opts) (*Response, error) {
-	ch := make(chan *Response)
 	optsMap, err := mapOpts(opts)
 	if err != nil {
 		return nil, err
+	}
+
+	type fetchResponse struct {
+		r *Response
+		e error
+	}
+	ch := make(chan *fetchResponse)
+	done := make(chan struct{}, 1)
+	if opts.Signal != nil {
+		controller := js.Global().Get("AbortController").New()
+		signal := controller.Get("signal")
+		optsMap["signal"] = signal
+		go func() {
+			select {
+			case <-opts.Signal.Done():
+				controller.Call("abort")
+			case <-done:
+			}
+		}()
 	}
 
 	js.Global().Call("fetch", url, optsMap).Call("then", js.NewCallback(func(args []js.Value) {
@@ -41,11 +61,19 @@ func Fetch(url string, opts *Opts) (*Response, error) {
 
 		args[0].Call("text").Call("then", js.NewCallback(func(args []js.Value) {
 			r.Body = []byte(args[0].String())
-			ch <- &r
+			done <- struct{}{}
+			ch <- &fetchResponse{r: &r}
 		}))
+	})).Call("catch", js.NewCallback(func(args []js.Value) {
+		msg := args[0].Get("message").String()
+		done <- struct{}{}
+		ch <- &fetchResponse{e: errors.New(msg)}
+
 	}))
 
-	return <-ch, nil
+	r := <-ch
+
+	return r.r, r.e
 }
 
 // Opts are the options you can pass to the fetch call.
@@ -57,7 +85,7 @@ type Opts struct {
 	Headers map[string]string
 
 	// Body is the body request
-	Body io.ReadCloser
+	Body io.Reader
 
 	// Mode docs https://developer.mozilla.org/en-US/docs/Web/API/Request/mode
 	Mode string
@@ -84,7 +112,7 @@ type Opts struct {
 	KeepAlive *bool
 
 	// Signal docs https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal
-	Signal chan struct{}
+	Signal context.Context
 }
 
 // oof.
@@ -122,9 +150,6 @@ func mapOpts(opts *Opts) (map[string]interface{}, error) {
 		mp["keepalive"] = *opts.KeepAlive
 	}
 
-	if opts.Signal != nil {
-		// TODO: do signal
-	}
 	if opts.Body != nil {
 		bts, err := ioutil.ReadAll(opts.Body)
 		if err != nil {
