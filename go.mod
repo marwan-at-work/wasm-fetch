@@ -1,1 +1,1 @@
-module marwan.io/pkg/wasm-fetch
+module marwan.io/wasm-fetch
