@@ -1,5 +1,5 @@
 # WASM-FETCH
-Fetch wrapper is a go-wasm wrapper around the [Fetch API](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API)
+ A go-wasm library that wraps the [Fetch API](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API)
 
 ### Install
 `go get marwan.io/wasm-fetch`
