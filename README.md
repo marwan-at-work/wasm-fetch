@@ -1,4 +1,6 @@
 # WASM-FETCH
+[![GoDoc](https://godoc.org/marwan.io/wasm-fetch?status.svg)](https://godoc.org/marwan.io/wasm-fetch)
+
  A go-wasm library that wraps the [Fetch API](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API)
 
 ### Install
