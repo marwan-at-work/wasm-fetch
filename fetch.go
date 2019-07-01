@@ -87,7 +87,7 @@ func Fetch(url string, opts *Opts) (*Response, error) {
 		}()
 	}
 
-	js.Global().Call("fetch", url, optsMap).Call("then", js.NewCallback(func(args []js.Value) {
+	js.Global().Call("fetch", url, optsMap).Call("then", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
 		var r Response
 		resp := args[0]
 		headersIt := resp.Get("headers").Call("entries")
@@ -110,16 +110,18 @@ func Fetch(url string, opts *Opts) (*Response, error) {
 		r.URL = resp.Get("url").String()
 		r.BodyUsed = resp.Get("bodyUsed").Bool()
 
-		args[0].Call("text").Call("then", js.NewCallback(func(args []js.Value) {
+		args[0].Call("text").Call("then", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
 			r.Body = []byte(args[0].String())
 			done <- struct{}{}
 			ch <- &fetchResponse{r: &r}
+			return nil
 		}))
-	})).Call("catch", js.NewCallback(func(args []js.Value) {
+		return nil
+	})).Call("catch", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
 		msg := args[0].Get("message").String()
 		done <- struct{}{}
 		ch <- &fetchResponse{e: errors.New(msg)}
-
+		return nil
 	}))
 
 	r := <-ch
