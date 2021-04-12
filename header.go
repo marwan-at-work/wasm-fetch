@@ -2,10 +2,11 @@ package fetch
 
 import (
 	"io"
-	"net/textproto"
 	"sort"
 	"strings"
 	"sync"
+
+	"marwan.io/wasm-fetch/textproto"
 )
 
 // A Header represents the key-value pairs in an HTTP header.
@@ -34,14 +35,6 @@ func (h Header) Get(key string) string {
 	return textproto.MIMEHeader(h).Get(key)
 }
 
-// get is like Get, but key must already be in CanonicalHeaderKey form.
-func (h Header) get(key string) string {
-	if v := h[key]; len(v) > 0 {
-		return v[0]
-	}
-	return ""
-}
-
 // Del deletes the values associated with key.
 func (h Header) Del(key string) {
 	textproto.MIMEHeader(h).Del(key)
@@ -54,16 +47,6 @@ func (h Header) Write(w io.Writer) error {
 
 func (h Header) write(w io.Writer) error {
 	return h.writeSubset(w, nil)
-}
-
-func (h Header) clone() Header {
-	h2 := make(Header, len(h))
-	for k, vv := range h {
-		vv2 := make([]string, len(vv))
-		copy(vv2, vv)
-		h2[k] = vv2
-	}
-	return h2
 }
 
 var headerNewlineToSpace = strings.NewReplacer("\n", " ", "\r", " ")
