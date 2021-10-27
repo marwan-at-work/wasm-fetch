@@ -70,6 +70,7 @@ func Fetch(url string, opts *Opts) (*Response, error) {
 
 	type fetchResponse struct {
 		r *Response
+		b js.Value
 		e error
 	}
 	ch := make(chan *fetchResponse)
@@ -87,8 +88,8 @@ func Fetch(url string, opts *Opts) (*Response, error) {
 		}()
 	}
 
-	js.Global().Call("fetch", url, optsMap).Call("then", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
-		var r Response
+	success := js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+		r := new(Response)
 		resp := args[0]
 		headersIt := resp.Get("headers").Call("entries")
 		headers := Header{}
@@ -110,22 +111,50 @@ func Fetch(url string, opts *Opts) (*Response, error) {
 		r.URL = resp.Get("url").String()
 		r.BodyUsed = resp.Get("bodyUsed").Bool()
 
-		args[0].Call("text").Call("then", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
-			r.Body = []byte(args[0].String())
-			done <- struct{}{}
-			ch <- &fetchResponse{r: &r}
-			return nil
-		}))
+		ch <- &fetchResponse{r: r, b: resp}
 		return nil
-	})).Call("catch", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+	})
+	defer success.Release()
+
+	failure := js.FuncOf(func(this js.Value, args []js.Value) interface{} {
 		msg := args[0].Get("message").String()
 		done <- struct{}{}
 		ch <- &fetchResponse{e: errors.New(msg)}
 		return nil
-	}))
+	})
+	defer failure.Release()
+
+	go js.Global().Call("fetch", url, optsMap).Call("then", success).Call("catch", failure)
 
 	r := <-ch
+	if r.e != nil {
+		return nil, r.e
+	}
 
+	successBody := js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+		// Wrap the input ArrayBuffer with a Uint8Array
+		uint8arrayWrapper := js.Global().Get("Uint8Array").New(args[0])
+		r.r.Body = make([]byte, uint8arrayWrapper.Get("byteLength").Int())
+		js.CopyBytesToGo(r.r.Body, uint8arrayWrapper)
+		ch <- r
+		return nil
+	})
+	defer successBody.Release()
+
+	failureBody := js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+		// Assumes it's a TypeError. See
+		// https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypeError
+		// for more information on this type.
+		// See https://fetch.spec.whatwg.org/#concept-body-consume-body for error causes.
+		msg := args[0].Get("message").String()
+		ch <- &fetchResponse{e: errors.New(msg)}
+		return nil
+	})
+	defer failureBody.Release()
+
+	go r.b.Call("arrayBuffer").Call("then", successBody, failureBody)
+
+	r = <-ch
 	return r.r, r.e
 }
 
