@@ -1,10 +1,10 @@
 package fetch
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
-	"io/ioutil"
 	"syscall/js"
 )
 
@@ -194,12 +194,24 @@ func mapOpts(opts *Opts) (map[string]interface{}, error) {
 	}
 
 	if opts.Body != nil {
-		bts, err := ioutil.ReadAll(opts.Body)
+		var bts []byte
+		var err error
+
+		switch v := opts.Body.(type) {
+		case *bytes.Buffer:
+			bts = v.Bytes()
+		default:
+			bts, err = io.ReadAll(opts.Body)
+		}
+
 		if err != nil {
 			return nil, err
 		}
 
-		mp["body"] = string(bts)
+		jsbody := js.Global().Get("Uint8Array").New(len(bts))
+		js.CopyBytesToJS(jsbody, bts)
+
+		mp["body"] = jsbody
 	}
 
 	return mp, nil
